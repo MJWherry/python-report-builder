@@ -1,0 +1,56 @@
+{
+  "title": "Quarterly Sales",
+  "base_css": "body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#0f172a}table{border-collapse:collapse;width:100%}caption{caption-side:top;text-align:left;font-weight:600;margin-bottom:8px;color:#334155}",
+  "tables": [
+    {
+      "title": "Accounts ({{report.quarter ?? \"current\"}})",
+      "css_class": "report",
+      "default_cell_style": { "border": "1px solid #cbd5e1", "padding": "6px 12px" },
+      "headers": [
+        {
+          "cells": [
+            { "value": "Account", "is_header": true, "rowspan": 2, "style": { "border": "1px solid #cbd5e1", "background_color": "#1e293b", "color": "#ffffff", "font_weight": "bold", "text_align": "left", "padding": "8px 12px" } },
+            { "value": "Region", "is_header": true, "rowspan": 2, "style": { "border": "1px solid #cbd5e1", "background_color": "#1e293b", "color": "#ffffff", "font_weight": "bold", "text_align": "left", "padding": "8px 12px" } },
+            { "value": "Financials", "is_header": true, "colspan": 2, "style": { "border": "1px solid #cbd5e1", "background_color": "#1e293b", "color": "#ffffff", "font_weight": "bold", "text_align": "center", "padding": "8px 12px" } },
+            { "value": "Note", "is_header": true, "rowspan": 2, "style": { "border": "1px solid #cbd5e1", "background_color": "#1e293b", "color": "#ffffff", "font_weight": "bold", "text_align": "left", "padding": "8px 12px" } }
+          ]
+        },
+        {
+          "cells": [
+            { "value": "Amount", "is_header": true, "style": { "border": "1px solid #cbd5e1", "background_color": "#334155", "color": "#ffffff", "font_weight": "bold", "text_align": "right", "padding": "8px 12px" } },
+            { "value": "Balance", "is_header": true, "style": { "border": "1px solid #cbd5e1", "background_color": "#334155", "color": "#ffffff", "font_weight": "bold", "text_align": "right", "padding": "8px 12px" } }
+          ]
+        }
+      ],
+      "rows": [
+        {
+          "repeat_for": "report.items",
+          "item_alias": "item",
+          "cells": [
+            { "value": "{{item.name}}", "link": "https://example.com/accounts/{{item.id}}" },
+            { "value": "{{item.region ?? \"-\"}}" },
+            { "value": "${{item.amount:,.2f}}", "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "text_align": "right" } },
+            {
+              "value": "${{item.balance:,.2f}}",
+              "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "text_align": "right" },
+              "style_rules": [
+                { "when": "{{item.balance < 0}}", "style": { "color": "#dc2626" } }
+              ]
+            },
+            { "value": "{{item.balance < 0 ? \"PAST DUE\" : item.note ?? \"-\"}}" }
+          ]
+        }
+      ],
+      "footers": [
+        {
+          "cells": [
+            { "value": "Total", "colspan": 2, "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "font_weight": "bold" } },
+            { "value": "${{report.totals.amount:,.2f}}", "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "font_weight": "bold", "text_align": "right" } },
+            { "value": "${{report.totals.balance:,.2f}}", "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "font_weight": "bold", "text_align": "right" } },
+            { "value": "", "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "font_weight": "bold" } }
+          ]
+        }
+      ]
+    }
+  ]
+}
