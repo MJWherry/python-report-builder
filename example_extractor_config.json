@@ -1,0 +1,78 @@
+{
+  "sources": [
+    { "id": "github", "type": "api", "base_url": "https://api.github.com" },
+    { "id": "grafana", "type": "api", "base_url": "https://grafana.example.com" },
+    { "id": "dashboard", "type": "playwright", "base_url": "https://example.com" }
+  ],
+  "extractions": [
+    {
+      "type": "api",
+      "id": "flask_stars",
+      "source_id": "github",
+      "name": "Flask star count",
+      "route": "repos/pallets/flask",
+      "returns": { "kind": "scalar", "scalar_type": "int" },
+      "value_path": "stargazers_count"
+    },
+    {
+      "type": "api",
+      "id": "flask_repo",
+      "source_id": "github",
+      "name": "Flask repository summary",
+      "route": "repos/pallets/flask",
+      "returns": { "kind": "custom", "model": "Repo" },
+      "fields": [
+        { "name": "name", "locator": "name" },
+        { "name": "full_name", "locator": "full_name" },
+        { "name": "owner", "locator": "owner.login" },
+        { "name": "stars", "locator": "stargazers_count", "scalar_type": "int" }
+      ]
+    },
+    {
+      "type": "api",
+      "id": "grafana_user",
+      "source_id": "grafana",
+      "name": "Grafana current user (redirect SSO login)",
+      "route": "api/user",
+      "returns": { "kind": "custom", "model": "GrafanaUser" },
+      "auth": {
+        "login_url": "https://grafana.example.com",
+        "success_url_pattern": "grafana\\.example\\.com/(\\?orgId=|$|d/|dashboards|home)",
+        "unauthorized_status": [401]
+      },
+      "fields": [
+        { "name": "id", "locator": "id", "scalar_type": "int" },
+        { "name": "login", "locator": "login" },
+        { "name": "email", "locator": "email" },
+        { "name": "name", "locator": "name" }
+      ]
+    },
+    {
+      "type": "playwright",
+      "id": "example_heading",
+      "source_id": "dashboard",
+      "name": "Example site heading",
+      "returns": { "kind": "scalar", "scalar_type": "str" },
+      "selectors": ["h1"]
+    },
+    {
+      "type": "playwright",
+      "id": "dashboard_summary",
+      "source_id": "dashboard",
+      "name": "Dashboard summary (SSO scrape)",
+      "returns": { "kind": "custom", "model": "Account" },
+      "wait_for": "#summary",
+      "remove_chars": ["$", ","],
+      "auth": {
+        "auth_required_selector": "button#sso-login",
+        "success_selector": "#summary",
+        "login_timeout_seconds": 300
+      },
+      "fields": [
+        { "name": "id", "locator": "#account-id", "scalar_type": "int" },
+        { "name": "name", "locator": "#account-name" },
+        { "name": "balance", "locator": "#account-balance", "scalar_type": "decimal" }
+      ]
+    }
+  ]
+}
