@@ -1,54 +1,138 @@
 {
+  "id": "quarterly-sales",
   "title": "Quarterly Sales",
-  "base_css": "body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#0f172a}table{border-collapse:collapse;width:100%}caption{caption-side:top;text-align:left;font-weight:600;margin-bottom:8px;color:#334155}",
-  "tables": [
+  "caption": "Accounts ({{report.quarter ?? \"current\"}})",
+  "css_class": "report",
+  "base_css": "body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#0f172a}#{{table_id}}{border-collapse:collapse;width:100%}#{{table_id}} caption{caption-side:top;text-align:left;font-weight:600;margin-bottom:8px;color:#334155}#{{table_id}} a{color:#2563eb;text-decoration:none}#{{table_id}} a:hover{text-decoration:underline}#{{table_id}} td.num,#{{table_id}} th.num{font-variant-numeric:tabular-nums}",
+  "strict": true,
+  "striped": true,
+  "stripe_style_name": "stripe",
+  "styles": {
+    "cell": {
+      "border": "1px solid #cbd5e1",
+      "padding": "6px 12px"
+    },
+    "header": {
+      "extends": "cell",
+      "background_color": "#1e293b",
+      "color": "#ffffff",
+      "font_weight": "bold",
+      "text_align": "left",
+      "padding": "8px 12px"
+    },
+    "header_center": {
+      "extends": "header",
+      "text_align": "center"
+    },
+    "header_num": {
+      "extends": "header",
+      "background_color": "#334155",
+      "text_align": "right"
+    },
+    "num": {
+      "extends": "cell",
+      "text_align": "right"
+    },
+    "danger": {
+      "color": "#dc2626"
+    },
+    "danger_row": {
+      "background_color": "#fef2f2"
+    },
+    "footer": {
+      "extends": "cell",
+      "font_weight": "bold"
+    },
+    "footer_num": {
+      "extends": "footer",
+      "text_align": "right"
+    },
+    "stripe": {
+      "background_color": "#f8fafc"
+    }
+  },
+  "default_cell_style_name": "cell",
+  "columns": [
+    { "style_name": "cell", "css_class": "idx" },
+    { "style_name": "cell", "css_class": "account" },
+    { "style_name": "cell", "empty_text": "-", "value": "{{item.region}}" },
+    { "style_name": "num", "empty_text": "-", "css_class": "num", "value": "${{item.amount:,.2f}}" },
+    { "style_name": "num", "empty_text": "-", "css_class": "num" },
+    { "style_name": "cell", "empty_text": "-" }
+  ],
+  "headers": [
     {
-      "title": "Accounts ({{report.quarter ?? \"current\"}})",
-      "css_class": "report",
-      "default_cell_style": { "border": "1px solid #cbd5e1", "padding": "6px 12px" },
-      "headers": [
+      "cells": [
+        { "value": "#", "rowspan": 2, "style_name": "header", "css_class": "idx" },
+        { "value": "Account", "rowspan": 2, "style_name": "header" },
+        { "value": "Region", "rowspan": 2, "style_name": "header" },
+        { "value": "Financials", "colspan": 2, "style_name": "header_center" },
+        { "value": "Note", "rowspan": 2, "style_name": "header" }
+      ]
+    },
+    {
+      "cells": [
+        { "value": "Amount", "style_name": "header_num", "css_class": "num" },
+        { "value": "Balance", "style_name": "header_num", "css_class": "num" }
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "repeat_for": "report.items",
+      "item_alias": "item",
+      "filter_when": "{{item.balance == 0}}",
+      "sort_by": ["region", "-balance"],
+      "limit": 50,
+      "css_class": "data-row",
+      "style_rules": [
         {
-          "cells": [
-            { "value": "Account", "is_header": true, "rowspan": 2, "style": { "border": "1px solid #cbd5e1", "background_color": "#1e293b", "color": "#ffffff", "font_weight": "bold", "text_align": "left", "padding": "8px 12px" } },
-            { "value": "Region", "is_header": true, "rowspan": 2, "style": { "border": "1px solid #cbd5e1", "background_color": "#1e293b", "color": "#ffffff", "font_weight": "bold", "text_align": "left", "padding": "8px 12px" } },
-            { "value": "Financials", "is_header": true, "colspan": 2, "style": { "border": "1px solid #cbd5e1", "background_color": "#1e293b", "color": "#ffffff", "font_weight": "bold", "text_align": "center", "padding": "8px 12px" } },
-            { "value": "Note", "is_header": true, "rowspan": 2, "style": { "border": "1px solid #cbd5e1", "background_color": "#1e293b", "color": "#ffffff", "font_weight": "bold", "text_align": "left", "padding": "8px 12px" } }
+          "when": "{{item.balance < 0}}",
+          "style_name": "danger_row"
+        }
+      ],
+      "cells": [
+        { "value": "{{index1}}" },
+        {
+          "value": "{{item.name}}",
+          "link": "https://example.com/accounts/{{item.id}}"
+        },
+        { "value": "" },
+        { "value": "" },
+        {
+          "value": "${{item.balance:,.2f}}",
+          "style_rules": [
+            {
+              "when": "{{item.balance < 0 and (item.region in [\"North\", \"West\"] or not item.region)}}",
+              "style_name": "danger"
+            }
           ]
         },
         {
-          "cells": [
-            { "value": "Amount", "is_header": true, "style": { "border": "1px solid #cbd5e1", "background_color": "#334155", "color": "#ffffff", "font_weight": "bold", "text_align": "right", "padding": "8px 12px" } },
-            { "value": "Balance", "is_header": true, "style": { "border": "1px solid #cbd5e1", "background_color": "#334155", "color": "#ffffff", "font_weight": "bold", "text_align": "right", "padding": "8px 12px" } }
-          ]
+          "value": "{{item.balance < 0 ? \"PAST DUE\" : item.note}}"
         }
-      ],
-      "rows": [
+      ]
+    }
+  ],
+  "footers": [
+    {
+      "css_class": "totals",
+      "cells": [
+        { "value": "Total", "colspan": 3, "style_name": "footer" },
         {
-          "repeat_for": "report.items",
-          "item_alias": "item",
-          "cells": [
-            { "value": "{{item.name}}", "link": "https://example.com/accounts/{{item.id}}" },
-            { "value": "{{item.region ?? \"-\"}}" },
-            { "value": "${{item.amount:,.2f}}", "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "text_align": "right" } },
-            {
-              "value": "${{item.balance:,.2f}}",
-              "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "text_align": "right" },
-              "style_rules": [
-                { "when": "{{item.balance < 0}}", "style": { "color": "#dc2626" } }
-              ]
-            },
-            { "value": "{{item.balance < 0 ? \"PAST DUE\" : item.note ?? \"-\"}}" }
-          ]
-        }
-      ],
-      "footers": [
+          "value": "${{sum(report.items, \"amount\"):,.2f}}",
+          "style_name": "footer_num",
+          "css_class": "num"
+        },
         {
-          "cells": [
-            { "value": "Total", "colspan": 2, "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "font_weight": "bold" } },
-            { "value": "${{report.totals.amount:,.2f}}", "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "font_weight": "bold", "text_align": "right" } },
-            { "value": "${{report.totals.balance:,.2f}}", "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "font_weight": "bold", "text_align": "right" } },
-            { "value": "", "style": { "border": "1px solid #cbd5e1", "padding": "6px 12px", "font_weight": "bold" } }
-          ]
+          "value": "${{sum(report.items, \"balance\"):,.2f}}",
+          "style_name": "footer_num",
+          "css_class": "num"
+        },
+        {
+          "value": "{{count(report.items)}} accounts",
+          "style_name": "footer",
+          "style": { "text_align": "left" }
         }
       ]
     }
