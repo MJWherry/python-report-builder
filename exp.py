@@ -5,6 +5,7 @@
 calls (``count(item.rows)`` and ``item.rows.count()``), ``and``/``or``/``not``,
 comparisons, ``in``/``not in``, lists, parentheses, ``??`` coalesce, and
 ``cond ? a : b``. Templates use ``{{ ... }}`` with optional ``:format`` specs.
+Plain text (no ``{{ }}``, or inner text that is not valid Python) is left as-is.
 """
 
 from __future__ import annotations
@@ -79,16 +80,6 @@ def fail_or_warn(message: str, *args: Any) -> None:
 
 def _truthy(value: Any) -> bool:
     return value is not MISSING and bool(value)
-
-
-def _is_word_boundary(text: str, start: int, end: int) -> bool:
-    before_ok = start == 0 or not (text[start - 1].isalnum() or text[start - 1] == "_")
-    after_ok = end >= len(text) or not (text[end].isalnum() or text[end] == "_")
-    return before_ok and after_ok
-
-
-def _scan_setup():
-    return None, 0  # quote, depth placeholder for readers
 
 
 def _split_top_level(text: str, sep: str) -> list[str]:
@@ -330,9 +321,13 @@ def _field_values(items: Any, field: str | None) -> list[Any]:
         return []
     if field is None:
         return list(items)
-    return [_attr(element, field) if not isinstance(element, dict) else (
-        element[field] if field in element else resolve_path(field, element)
-    ) for element in items]
+    out: list[Any] = []
+    for element in items:
+        if isinstance(element, dict) and field in element:
+            out.append(element[field])
+        else:
+            out.append(resolve_path(field, element) if not isinstance(element, dict) else _attr(element, field))
+    return out
 
 
 def _aggregate(name: str, items: Any, field: str | None) -> Any:
@@ -366,9 +361,9 @@ def _aggregate(name: str, items: Any, field: str | None) -> Any:
 
 def _fn_aggregate(name: str):
     def _call(items: Any = None, field: Any = None, *rest: Any) -> Any:
-        field_name: str | None = None
         if rest:
             fail_or_warn("Too many arguments for %s()", name)
+        field_name: str | None = None
         if field is not None and field is not MISSING:
             field_name = str(field)
         return _aggregate(name, items, field_name)
@@ -654,17 +649,24 @@ class _SafeEval(ast.NodeVisitor):
         return MISSING
 
 
-def _eval_python(context: Any, expr: str) -> Any:
+def _eval_python(context: Any, expr: str, *, literal_fallback: bool) -> Any:
     try:
         tree = ast.parse(expr, mode="eval")
     except SyntaxError as exc:
+        if literal_fallback:
+            return expr
         fail_or_warn("Invalid expression %r: %s", expr, exc.msg)
         return MISSING
     return _SafeEval(context).visit(tree.body)
 
 
-def eval_expr(context: Any, expr: str) -> Any:
-    """Evaluate ``expr`` against ``context`` (dict, object, or nested mix)."""
+def eval_expr(context: Any, expr: str, *, literal_fallback: bool = True) -> Any:
+    """Evaluate ``expr`` against ``context``.
+
+    Cell/template text uses ``literal_fallback=True`` (the default): if the
+    string is not valid Python it is returned unchanged. Conditions and
+    ``repeat_for`` pass ``literal_fallback=False``.
+    """
 
     expr = expr.strip()
     if not expr:
@@ -677,7 +679,7 @@ def eval_expr(context: Any, expr: str) -> Any:
 
     unwrapped = _unwrap_parens(expr)
     if unwrapped != expr:
-        return eval_expr(context, unwrapped)
+        return eval_expr(context, unwrapped, literal_fallback=literal_fallback)
 
     question = _find_ternary_question(expr)
     if question != -1:
@@ -686,27 +688,27 @@ def eval_expr(context: Any, expr: str) -> Any:
         colon = _find_ternary_colon(remainder)
         when_true, when_false = (remainder, "") if colon == -1 else (remainder[:colon], remainder[colon + 1 :])
         branch = when_true if eval_condition(condition.strip(), context) else when_false
-        return eval_expr(context, branch.strip())
+        return eval_expr(context, branch.strip(), literal_fallback=literal_fallback)
 
     parts = _split_top_level(expr, "??")
     if len(parts) > 1:
         for part in parts:
-            value = eval_expr(context, part.strip())
+            value = eval_expr(context, part.strip(), literal_fallback=literal_fallback)
             if value is not MISSING and value is not None:
                 return value
         return MISSING
 
-    return _eval_python(context, expr)
+    return _eval_python(context, expr, literal_fallback=literal_fallback)
 
 
 def eval_path(path: str, context: Any) -> Any:
-    return eval_expr(context, path)
+    return eval_expr(context, path, literal_fallback=False)
 
 
 def eval_condition(when: str | None, context: Any) -> bool:
     if not when:
         return False
-    return _truthy(eval_expr(context, when))
+    return _truthy(eval_expr(context, when, literal_fallback=False))
 
 
 def _format_value(value: Any, spec: str) -> str:
@@ -736,13 +738,15 @@ def _eval_token(content: str, context: Any) -> tuple[Any, str]:
         expr, spec = content, ""
     else:
         expr, spec = content[:colon], content[colon + 1 :]
-    value = eval_expr(context, expr.strip())
+    value = eval_expr(context, expr.strip(), literal_fallback=True)
     return value, _format_value(value, spec.strip())
 
 
 def render_template(template: str | None, context: Any, *, escape: bool = True) -> str:
     if not template:
         return ""
+    if "{{" not in template:
+        return html.escape(template, quote=True) if escape else template
 
     def _sub(match: re.Match[str]) -> str:
         _, text = _eval_token(match.group(1).strip(), context)
@@ -755,7 +759,7 @@ class ExpressionRunner:
     """Evaluate expressions and templates against a context mapping/object."""
 
     def eval(self, context: Any, expr: str) -> Any:
-        return eval_expr(context, expr)
+        return eval_expr(context, expr, literal_fallback=True)
 
     def eval_condition(self, context: Any, expr: str | None) -> bool:
         return eval_condition(expr, context)
