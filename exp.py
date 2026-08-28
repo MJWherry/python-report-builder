@@ -5,7 +5,9 @@
 calls (``count(item.rows)`` and ``item.rows.count()``), ``and``/``or``/``not``,
 comparisons, ``in``/``not in``, lists, parentheses, ``??`` coalesce, and
 ``cond ? a : b``. Templates use ``{{ ... }}`` with optional ``:format`` specs.
-Plain text (no ``{{ }}``, or inner text that is not valid Python) is left as-is.
+
+Context keys may contain spaces (``repeat_for: "Account Status"``,
+``{{Account Status}}``). Those are path lookups, not Python identifiers.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import html
 import logging
 import operator
 import re
+from collections.abc import Mapping
 from contextvars import ContextVar
 from datetime import date, datetime
 from typing import Any, Callable
@@ -42,6 +45,7 @@ MISSING = _Missing()
 
 _TOKEN_RE = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
 _NUMBER_RE = re.compile(r"^[+-]?(\d+\.\d*|\.\d+|\d+)$")
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _AGGREGATES = frozenset({"sum", "avg", "min", "max", "count"})
 _NAME_ALIASES = {"true": True, "false": False, "null": None, "none": None, "None": None}
 _BINOPS: dict[type, Callable[[Any, Any], Any]] = {
@@ -80,6 +84,10 @@ def fail_or_warn(message: str, *args: Any) -> None:
 
 def _truthy(value: Any) -> bool:
     return value is not MISSING and bool(value)
+
+
+def _is_mapping(value: Any) -> bool:
+    return isinstance(value, Mapping) and not isinstance(value, (str, bytes))
 
 
 def _split_top_level(text: str, sep: str) -> list[str]:
@@ -263,7 +271,39 @@ def _unwrap_parens(expr: str) -> str:
     return expr
 
 
+def _parse_call(expr: str) -> tuple[str, str] | None:
+    expr = expr.strip()
+    open_paren = expr.find("(")
+    if open_paren <= 0 or not expr.endswith(")"):
+        return None
+    name = expr[:open_paren].strip()
+    if not _IDENT_RE.match(name):
+        return None
+    depth = 0
+    quote: str | None = None
+    for i in range(open_paren, len(expr)):
+        ch = expr[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "\"'":
+            quote = ch
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                if i != len(expr) - 1:
+                    return None
+                return name, expr[open_paren + 1 : i]
+    return None
+
+
 def resolve_path(path: str, context: Any) -> Any:
+    """Walk ``a.b.c`` where any segment may be a dict key with spaces."""
+
     current: Any = context
     for segment in path.split("."):
         current = _attr(current, segment)
@@ -272,14 +312,20 @@ def resolve_path(path: str, context: Any) -> Any:
     return current
 
 
+def _mapping_lookup(context: Any, key: str) -> Any:
+    if _is_mapping(context) and key in context:
+        return context[key]
+    return MISSING
+
+
 def _attr(obj: Any, name: str) -> Any:
     if obj is MISSING or obj is None:
         return MISSING
     if name.startswith("_"):
         fail_or_warn("Access to %r is not allowed", name)
         return MISSING
-    if isinstance(obj, dict):
-        return obj[name] if name in obj else MISSING
+    if _is_mapping(obj) and name in obj:
+        return obj[name]
     if isinstance(obj, (list, tuple)) and name.lstrip("-").isdigit():
         idx = int(name)
         if -len(obj) <= idx < len(obj):
@@ -323,10 +369,7 @@ def _field_values(items: Any, field: str | None) -> list[Any]:
         return list(items)
     out: list[Any] = []
     for element in items:
-        if isinstance(element, dict) and field in element:
-            out.append(element[field])
-        else:
-            out.append(resolve_path(field, element) if not isinstance(element, dict) else _attr(element, field))
+        out.append(resolve_path(field, element) if field else MISSING)
     return out
 
 
@@ -415,12 +458,11 @@ _BUILTINS: dict[str, Any] = {
 def _lookup_name(name: str, context: Any) -> Any:
     if name in _NAME_ALIASES:
         return _NAME_ALIASES[name]
+    found = _mapping_lookup(context, name)
+    if found is not MISSING:
+        return found
     if name in _BUILTINS:
         return _BUILTINS[name]
-    if isinstance(context, dict):
-        if name in context:
-            return context[name]
-        return MISSING
     if hasattr(context, name) and not name.startswith("_"):
         return getattr(context, name)
     return MISSING
@@ -649,24 +691,43 @@ class _SafeEval(ast.NodeVisitor):
         return MISSING
 
 
-def _eval_python(context: Any, expr: str, *, literal_fallback: bool) -> Any:
+def _eval_legacy_call(context: Any, expr: str) -> Any:
+    parsed = _parse_call(expr)
+    if not parsed:
+        return MISSING
+    name, args_src = parsed
+    func = _BUILTINS.get(name)
+    if func is None:
+        fail_or_warn("Unknown function %r in expression", name)
+        return MISSING
+    args = [eval_expr(context, part.strip()) for part in _split_top_level(args_src, ",") if part.strip()]
+    try:
+        return func(*args)
+    except TypeError as exc:
+        fail_or_warn("Function call failed: %s", exc)
+        return MISSING
+
+
+def _eval_python(context: Any, expr: str) -> Any:
     try:
         tree = ast.parse(expr, mode="eval")
-    except SyntaxError as exc:
-        if literal_fallback:
-            return expr
-        fail_or_warn("Invalid expression %r: %s", expr, exc.msg)
+    except SyntaxError:
+        found = _mapping_lookup(context, expr)
+        if found is not MISSING:
+            return found
+        resolved = resolve_path(expr, context)
+        if resolved is not MISSING:
+            return resolved
+        called = _eval_legacy_call(context, expr)
+        if called is not MISSING:
+            return called
+        fail_or_warn("Invalid expression %r", expr)
         return MISSING
     return _SafeEval(context).visit(tree.body)
 
 
-def eval_expr(context: Any, expr: str, *, literal_fallback: bool = True) -> Any:
-    """Evaluate ``expr`` against ``context``.
-
-    Cell/template text uses ``literal_fallback=True`` (the default): if the
-    string is not valid Python it is returned unchanged. Conditions and
-    ``repeat_for`` pass ``literal_fallback=False``.
-    """
+def eval_expr(context: Any, expr: str) -> Any:
+    """Evaluate ``expr`` against ``context`` (dict, object, or nested mix)."""
 
     expr = expr.strip()
     if not expr:
@@ -679,7 +740,7 @@ def eval_expr(context: Any, expr: str, *, literal_fallback: bool = True) -> Any:
 
     unwrapped = _unwrap_parens(expr)
     if unwrapped != expr:
-        return eval_expr(context, unwrapped, literal_fallback=literal_fallback)
+        return eval_expr(context, unwrapped)
 
     question = _find_ternary_question(expr)
     if question != -1:
@@ -688,27 +749,31 @@ def eval_expr(context: Any, expr: str, *, literal_fallback: bool = True) -> Any:
         colon = _find_ternary_colon(remainder)
         when_true, when_false = (remainder, "") if colon == -1 else (remainder[:colon], remainder[colon + 1 :])
         branch = when_true if eval_condition(condition.strip(), context) else when_false
-        return eval_expr(context, branch.strip(), literal_fallback=literal_fallback)
+        return eval_expr(context, branch.strip())
 
     parts = _split_top_level(expr, "??")
     if len(parts) > 1:
         for part in parts:
-            value = eval_expr(context, part.strip(), literal_fallback=literal_fallback)
+            value = eval_expr(context, part.strip())
             if value is not MISSING and value is not None:
                 return value
         return MISSING
 
-    return _eval_python(context, expr, literal_fallback=literal_fallback)
+    found = _mapping_lookup(context, expr)
+    if found is not MISSING:
+        return found
+
+    return _eval_python(context, expr)
 
 
 def eval_path(path: str, context: Any) -> Any:
-    return eval_expr(context, path, literal_fallback=False)
+    return eval_expr(context, path)
 
 
 def eval_condition(when: str | None, context: Any) -> bool:
     if not when:
         return False
-    return _truthy(eval_expr(context, when, literal_fallback=False))
+    return _truthy(eval_expr(context, when))
 
 
 def _format_value(value: Any, spec: str) -> str:
@@ -738,7 +803,7 @@ def _eval_token(content: str, context: Any) -> tuple[Any, str]:
         expr, spec = content, ""
     else:
         expr, spec = content[:colon], content[colon + 1 :]
-    value = eval_expr(context, expr.strip(), literal_fallback=True)
+    value = eval_expr(context, expr.strip())
     return value, _format_value(value, spec.strip())
 
 
@@ -759,7 +824,7 @@ class ExpressionRunner:
     """Evaluate expressions and templates against a context mapping/object."""
 
     def eval(self, context: Any, expr: str) -> Any:
-        return eval_expr(context, expr, literal_fallback=True)
+        return eval_expr(context, expr)
 
     def eval_condition(self, context: Any, expr: str | None) -> bool:
         return eval_condition(expr, context)
